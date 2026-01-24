@@ -40,6 +40,10 @@ struct HomeCoverView: View {
             .padding()
         }
         .ignoresSafeArea()
+        .safeAreaInset(edge: .bottom) {
+            // 为底部导航栏留出空间
+            Color.clear.frame(height: 49)
+        }
     }
 }
 
