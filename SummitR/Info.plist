@@ -48,5 +48,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>需要访问您的健康数据以展示心率和步数信息</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>需要访问您的健康数据以展示心率和步数信息</string>
 </dict>
 </plist>
