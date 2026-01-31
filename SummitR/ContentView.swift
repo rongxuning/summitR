@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var selectedTab = 0
     @StateObject private var healthKitManager = HealthKitManager()
+    @Environment(\.scenePhase) private var scenePhase
     
     // Tab 配置
     private let tabs: [(title: String, icon: String, selectedIcon: String)] = [
@@ -42,7 +43,12 @@ struct ContentView: View {
         .onChange(of: selectedTab) { _, newValue in
             // 每次切到“健康”tab 自动检查/刷新
             guard newValue == 1 else { return }
-            Task { await healthKitManager.refreshForHealthTab() }
+            Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // 回到前台时，如果当前在健康页，也拉一次最新
+            guard newPhase == .active, selectedTab == 1 else { return }
+            Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
         }
     }
 }

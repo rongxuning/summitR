@@ -19,6 +19,10 @@ class HealthKitManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    // 简单节流：避免频繁切换 tab 导致重复请求
+    private var lastFetchAt: Date?
+    private var currentFetchTask: Task<Void, Never>?
+    
     // 需要请求的权限
     private let readTypes: Set<HKObjectType> = [
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
@@ -34,7 +38,8 @@ class HealthKitManager: ObservableObject {
     /// 每次进入“健康”页面/Tab 时调用：
     /// - 如果系统认为不需要再弹窗授权，则直接尝试拉取数据（已授权 -> 直接展示）
     /// - 如果需要授权弹窗，则保持未授权状态（让用户点按钮）
-    func refreshForHealthTab() async {
+    /// - forceFetch=true：每次进入都强制拉最新（推荐用于 tab 切换触发）
+    func refreshForHealthTab(forceFetch: Bool = false) async {
         guard HKHealthStore.isHealthDataAvailable() else {
             errorMessage = "此设备不支持 HealthKit"
             isAuthorized = false
@@ -48,7 +53,7 @@ class HealthKitManager: ObservableObject {
         case .unnecessary:
             // 系统判断不需要再请求（用户已做过选择）。此时直接尝试读取来驱动 UI。
             isAuthorized = true
-            await fetchHealthData()
+            await fetchLatestIfNeeded(force: forceFetch)
         case .shouldRequest:
             // 仍需要请求授权（首次/新增类型）
             isAuthorized = false
@@ -58,6 +63,27 @@ class HealthKitManager: ObservableObject {
         @unknown default:
             isAuthorized = false
         }
+    }
+    
+    private func fetchLatestIfNeeded(force: Bool) async {
+        // 取消上一次未完成的拉取（避免并发覆盖/浪费）
+        currentFetchTask?.cancel()
+        
+        // 节流：非强制情况下，3 秒内不重复拉取
+        if !force, let lastFetchAt {
+            if Date().timeIntervalSince(lastFetchAt) < 3 {
+                return
+            }
+        }
+        
+        lastFetchAt = Date()
+        currentFetchTask = Task { [weak self] in
+            guard let self else { return }
+            await self.fetchHealthData()
+        }
+        
+        // 等待本次拉取结束（让 UI 更确定地更新）
+        await currentFetchTask?.value
     }
     
     private func requestStatusForAuthorization() async -> HKAuthorizationRequestStatus {
@@ -114,7 +140,7 @@ class HealthKitManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
             
             // 授权后刷新一次
-            await refreshForHealthTab()
+            await refreshForHealthTab(forceFetch: true)
         } catch {
             errorMessage = "授权请求失败: \(error.localizedDescription)"
             isAuthorized = false

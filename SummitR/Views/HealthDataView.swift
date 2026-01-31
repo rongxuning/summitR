@@ -6,9 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 
 struct HealthDataView: View {
     @ObservedObject var healthKitManager: HealthKitManager
+    
+    @State private var isVisible = false
+    private let refreshTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     
     var body: some View {
         NavigationView {
@@ -28,22 +32,18 @@ struct HealthDataView: View {
             }
             .navigationTitle("健康数据")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        Task {
-                            await healthKitManager.fetchHealthData()
-                        }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-            }
         }
         .task {
             // 视图出现时自动刷新：已授权直接展示数据；未授权则保持授权页
-            await healthKitManager.refreshForHealthTab()
+            await healthKitManager.refreshForHealthTab(forceFetch: false)
         }
+        .onReceive(refreshTimer) { _ in
+            // 定时刷新：仅当页面可见且已授权时才刷新
+            guard isVisible, healthKitManager.isAuthorized else { return }
+            Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+        }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
         .safeAreaInset(edge: .bottom) {
             // 为底部导航栏留出空间
             Color.clear.frame(height: 49)
@@ -110,6 +110,11 @@ struct HealthDataListView: View {
                 }
             }
             .padding()
+        }
+        // 确保即使内容较少也能下拉触发刷新（iOS 16+）
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await healthKitManager.refreshForHealthTab(forceFetch: true)
         }
     }
 }
