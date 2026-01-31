@@ -8,6 +8,20 @@
 import SwiftUI
 
 struct ContentView: View {
+    @AppStorage("isLoggedIn") private var isLoggedIn = false
+    
+    var body: some View {
+        Group {
+            if isLoggedIn {
+                MainTabView()
+            } else {
+                LoginView()
+            }
+        }
+    }
+}
+
+struct MainTabView: View {
     @State private var selectedTab = 0
     @StateObject private var healthKitManager = HealthKitManager()
     @Environment(\.scenePhase) private var scenePhase
