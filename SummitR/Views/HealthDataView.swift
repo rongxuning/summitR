@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct HealthDataView: View {
-    @StateObject private var healthKitManager = HealthKitManager()
+    @ObservedObject var healthKitManager: HealthKitManager
     
     var body: some View {
         NavigationView {
@@ -41,9 +41,8 @@ struct HealthDataView: View {
             }
         }
         .task {
-            if healthKitManager.isAuthorized {
-                await healthKitManager.fetchHealthData()
-            }
+            // 视图出现时自动刷新：已授权直接展示数据；未授权则保持授权页
+            await healthKitManager.refreshForHealthTab()
         }
         .safeAreaInset(edge: .bottom) {
             // 为底部导航栏留出空间
@@ -180,5 +179,5 @@ struct HealthDataCard: View {
 }
 
 #Preview {
-    HealthDataView()
+    HealthDataView(healthKitManager: HealthKitManager())
 }

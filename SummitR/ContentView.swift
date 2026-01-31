@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var selectedTab = 0
+    @StateObject private var healthKitManager = HealthKitManager()
     
     // Tab 配置
     private let tabs: [(title: String, icon: String, selectedIcon: String)] = [
@@ -25,7 +26,7 @@ struct ContentView: View {
                     case 0:
                         HomeCoverView()
                     case 1:
-                        HealthDataView()
+                        HealthDataView(healthKitManager: healthKitManager)
                     default:
                         HomeCoverView()
                     }
@@ -38,6 +39,11 @@ struct ContentView: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onChange(of: selectedTab) { _, newValue in
+            // 每次切到“健康”tab 自动检查/刷新
+            guard newValue == 1 else { return }
+            Task { await healthKitManager.refreshForHealthTab() }
+        }
     }
 }
 

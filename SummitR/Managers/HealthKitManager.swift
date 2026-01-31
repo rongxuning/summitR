@@ -26,7 +26,49 @@ class HealthKitManager: ObservableObject {
     ]
     
     init() {
-        checkAuthorizationStatus()
+        // 不在 init 里强判授权；由页面出现时统一 refresh
+    }
+    
+    // MARK: - Public lifecycle helpers
+    
+    /// 每次进入“健康”页面/Tab 时调用：
+    /// - 如果系统认为不需要再弹窗授权，则直接尝试拉取数据（已授权 -> 直接展示）
+    /// - 如果需要授权弹窗，则保持未授权状态（让用户点按钮）
+    func refreshForHealthTab() async {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            errorMessage = "此设备不支持 HealthKit"
+            isAuthorized = false
+            return
+        }
+        
+        errorMessage = nil
+        
+        let status = await requestStatusForAuthorization()
+        switch status {
+        case .unnecessary:
+            // 系统判断不需要再请求（用户已做过选择）。此时直接尝试读取来驱动 UI。
+            isAuthorized = true
+            await fetchHealthData()
+        case .shouldRequest:
+            // 仍需要请求授权（首次/新增类型）
+            isAuthorized = false
+        case .unknown:
+            // 不确定时，保守处理：不自动弹授权，让用户手动点
+            isAuthorized = false
+        @unknown default:
+            isAuthorized = false
+        }
+    }
+    
+    private func requestStatusForAuthorization() async -> HKAuthorizationRequestStatus {
+        await withCheckedContinuation { continuation in
+            healthStore.getRequestStatusForAuthorization(
+                toShare: Set<HKSampleType>(),
+                read: readTypes
+            ) { status, _ in
+                continuation.resume(returning: status)
+            }
+        }
     }
     
     // 检查授权状态
@@ -71,26 +113,8 @@ class HealthKitManager: ObservableObject {
             // 等待一小段时间，让系统更新授权状态
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
             
-            // 重要：对于只读权限，authorizationStatus 可能不准确
-            // 状态 1 (.sharingDenied) 可能是针对写入权限的，不代表读取权限被拒绝
-            // 正确的做法是直接尝试读取数据来验证授权
-            
-            // 直接尝试获取数据来验证授权
-            // 如果能够执行查询（即使没有数据），说明有读取权限
-            isAuthorized = true
-            await fetchHealthData()
-            
-            // 如果成功执行了查询（无论是否有数据），说明授权成功
-            // 没有数据是正常情况（用户可能没有记录健康数据）
-            // 只有在查询失败并返回权限错误时，才认为授权失败
-            
-            // 检查是否有权限错误（通过 errorMessage 判断）
-            // 如果没有设置错误信息，说明查询成功执行，授权成功
-            if errorMessage == nil || !errorMessage!.contains("权限") {
-                // 授权成功，即使没有数据也是正常的
-                isAuthorized = true
-                errorMessage = nil
-            }
+            // 授权后刷新一次
+            await refreshForHealthTab()
         } catch {
             errorMessage = "授权请求失败: \(error.localizedDescription)"
             isAuthorized = false
@@ -101,41 +125,37 @@ class HealthKitManager: ObservableObject {
     
     // 获取健康数据
     func fetchHealthData() async {
-        guard isAuthorized else {
-            await requestAuthorization()
-            return
-        }
+        guard isAuthorized else { return }
         
         isLoading = true
         errorMessage = nil
         
         var items: [HealthDataItem] = []
-        var hasPermissionError = false
         
-        // 获取心率数据
-        if let heartRate = await fetchHeartRate() {
-            items.append(heartRate)
-        } else {
-            // 检查是否是权限错误（这里简化处理，实际应该检查具体错误）
-            // 如果没有数据但也没有错误，说明只是没有数据，不是权限问题
+        let hr = await fetchHeartRateResult()
+        if hr.authorizationDenied {
+            isAuthorized = false
+            errorMessage = "未获得读取心率权限，请在 健康 > 头像/隐私 > 应用 中允许 SummitR 读取心率"
+        } else if let item = hr.item {
+            items.append(item)
         }
         
-        // 获取步数数据
-        if let stepCount = await fetchStepCount() {
-            items.append(stepCount)
+        let steps = await fetchStepCountResult()
+        if steps.authorizationDenied {
+            isAuthorized = false
+            errorMessage = "未获得读取步数权限，请在 健康 > 头像/隐私 > 应用 中允许 SummitR 读取步数"
+        } else if let item = steps.item {
+            items.append(item)
         }
         
         healthDataItems = items.sorted { $0.date > $1.date }
-        
-        // 如果没有获取到数据，但不一定是权限问题
-        // 可能是用户没有记录健康数据，这是正常情况
         isLoading = false
     }
     
     // 获取最新心率
-    private func fetchHeartRate() async -> HealthDataItem? {
+    private func fetchHeartRateResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
         guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            return nil
+            return (nil, false)
         }
         
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
@@ -151,22 +171,20 @@ class HealthKitManager: ObservableObject {
             ) { query, samples, error in
                 if let error = error {
                     let nsError = error as NSError
-                    // 检查是否是权限错误
-                    // HealthKit 权限错误通常是 domain: "com.apple.healthkit", code: 4
-                    if nsError.domain == "com.apple.healthkit" {
-                        print("获取心率数据失败 - HealthKit错误: code=\(nsError.code), \(error.localizedDescription)")
-                        // 如果是权限错误，会在上层处理
+                    if nsError.domain == HKErrorDomain,
+                       nsError.code == HKError.errorAuthorizationDenied.rawValue {
+                        continuation.resume(returning: (nil, true))
                     } else {
                         print("获取心率数据失败: \(error.localizedDescription)")
+                        continuation.resume(returning: (nil, false))
                     }
-                    continuation.resume(returning: nil)
                     return
                 }
                 
                 // 如果没有数据，返回 nil（这是正常情况，用户可能没有记录心率）
                 guard let sample = samples?.first as? HKQuantitySample else {
                     // 没有数据不代表没有权限，这是正常情况
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: (nil, false))
                     return
                 }
                 
@@ -181,7 +199,7 @@ class HealthKitManager: ObservableObject {
                     formattedValue: String(format: "%.0f", value)
                 )
                 
-                continuation.resume(returning: result)
+                continuation.resume(returning: (result, false))
             }
             
             healthStore.execute(query)
@@ -189,9 +207,9 @@ class HealthKitManager: ObservableObject {
     }
     
     // 获取今日步数
-    private func fetchStepCount() async -> HealthDataItem? {
+    private func fetchStepCountResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
         guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
-            return nil
+            return (nil, false)
         }
         
         let calendar = Calendar.current
@@ -210,13 +228,19 @@ class HealthKitManager: ObservableObject {
                 options: .cumulativeSum
             ) { query, statistics, error in
                 if let error = error {
-                    print("获取步数数据失败: \(error.localizedDescription)")
-                    continuation.resume(returning: nil)
+                    let nsError = error as NSError
+                    if nsError.domain == HKErrorDomain,
+                       nsError.code == HKError.errorAuthorizationDenied.rawValue {
+                        continuation.resume(returning: (nil, true))
+                    } else {
+                        print("获取步数数据失败: \(error.localizedDescription)")
+                        continuation.resume(returning: (nil, false))
+                    }
                     return
                 }
                 
                 guard let sum = statistics?.sumQuantity() else {
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: (nil, false))
                     return
                 }
                 
@@ -230,7 +254,7 @@ class HealthKitManager: ObservableObject {
                     formattedValue: String(format: "%.0f", value)
                 )
                 
-                continuation.resume(returning: item)
+                continuation.resume(returning: (item, false))
             }
             
             healthStore.execute(query)
