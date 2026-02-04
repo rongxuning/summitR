@@ -27,13 +27,24 @@ class HealthKitManager: ObservableObject {
     private var currentFetchTask: Task<Void, Never>?
     private var currentWorkoutFetchTask: Task<Void, Never>?
     
-    // 需要请求的权限（心率、步数、健身记录、健身路线）
-    private let readTypes: Set<HKObjectType> = [
-        HKObjectType.quantityType(forIdentifier: .heartRate)!,
-        HKObjectType.quantityType(forIdentifier: .stepCount)!,
-        HKObjectType.workoutType(),
-        HKSeriesType.workoutRoute()
-    ]
+    // 需要请求的权限（参考健康 App 常见数据类型）
+    private var healthReadTypes: Set<HKObjectType> {
+        var types: Set<HKObjectType> = [
+            HKObjectType.quantityType(forIdentifier: .heartRate)!,
+            HKObjectType.quantityType(forIdentifier: .stepCount)!,
+            HKObjectType.workoutType(),
+            HKSeriesType.workoutRoute()
+        ]
+        if let t = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) { types.insert(t) }
+        if let t = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning) { types.insert(t) }
+        if let t = HKQuantityType.quantityType(forIdentifier: .flightsClimbed) { types.insert(t) }
+        if let t = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) { types.insert(t) }
+        if let t = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) { types.insert(t) }
+        if let t = HKQuantityType.quantityType(forIdentifier: .dietaryEnergyConsumed) { types.insert(t) }
+        return types
+    }
+    
+    private var readTypes: Set<HKObjectType> { healthReadTypes }
     
     init() {
         // 不在 init 里强判授权；由页面出现时统一 refresh
@@ -155,7 +166,7 @@ class HealthKitManager: ObservableObject {
         isLoading = false
     }
     
-    // 获取健康数据
+    // 获取健康数据（参考健康 App，多类数据平铺）
     func fetchHealthData() async {
         guard isAuthorized else { return }
         
@@ -179,6 +190,13 @@ class HealthKitManager: ObservableObject {
         } else if let item = steps.item {
             items.append(item)
         }
+        
+        if let item = await fetchRestingHeartRateResult().item { items.append(item) }
+        if let item = await fetchDistanceWalkingRunningResult().item { items.append(item) }
+        if let item = await fetchFlightsClimbedResult().item { items.append(item) }
+        if let item = await fetchActiveEnergyBurnedResult().item { items.append(item) }
+        if let item = await fetchBasalEnergyBurnedResult().item { items.append(item) }
+        if let item = await fetchDietaryEnergyConsumedResult().item { items.append(item) }
         
         healthDataItems = items.sorted { $0.date > $1.date }
         isLoading = false
@@ -454,5 +472,67 @@ class HealthKitManager: ObservableObject {
             
             healthStore.execute(query)
         }
+    }
+    
+    // MARK: - 扩展健康数据（今日汇总或最新一条）
+    
+    private func fetchRestingHeartRateResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return (nil, false) }
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { cont in
+            let q = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, error in
+                if let e = error as NSError?, e.domain == HKErrorDomain, e.code == HKError.errorAuthorizationDenied.rawValue {
+                    cont.resume(returning: (nil, true)); return
+                }
+                guard let s = samples?.first as? HKQuantitySample else { cont.resume(returning: (nil, false)); return }
+                let v = s.quantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
+                let item = HealthDataItem(type: .restingHeartRate, value: v, unit: "bpm", date: s.endDate, formattedValue: String(format: "%.0f", v))
+                cont.resume(returning: (item, false))
+            }
+            healthStore.execute(q)
+        }
+    }
+    
+    private func fetchTodayStatistics(identifier: HKQuantityTypeIdentifier, unit: HKUnit, type: HealthDataItem.HealthDataType, displayUnit: String, format: String) async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        guard let qtyType = HKQuantityType.quantityType(forIdentifier: identifier) else { return (nil, false) }
+        let cal = Calendar.current
+        let now = Date()
+        let start = cal.startOfDay(for: now)
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: .strictStartDate)
+        return await withCheckedContinuation { cont in
+            let q = HKStatisticsQuery(quantityType: qtyType, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, stats, error in
+                if let e = error as NSError?, e.domain == HKErrorDomain, e.code == HKError.errorAuthorizationDenied.rawValue {
+                    cont.resume(returning: (nil, true)); return
+                }
+                guard let sum = stats?.sumQuantity() else { cont.resume(returning: (nil, false)); return }
+                let v = sum.doubleValue(for: unit)
+                let item = HealthDataItem(type: type, value: v, unit: displayUnit, date: now, formattedValue: String(format: format, v))
+                cont.resume(returning: (item, false))
+            }
+            healthStore.execute(q)
+        }
+    }
+    
+    private func fetchDistanceWalkingRunningResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        let r = await fetchTodayStatistics(identifier: .distanceWalkingRunning, unit: .meter(), type: .distanceWalkingRunning, displayUnit: "米", format: "%.0f")
+        guard let item = r.item else { return (nil, r.authorizationDenied) }
+        let km = item.value / 1000
+        return (HealthDataItem(type: .distanceWalkingRunning, value: item.value, unit: "公里", date: item.date, formattedValue: String(format: "%.2f", km)), false)
+    }
+    
+    private func fetchFlightsClimbedResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        await fetchTodayStatistics(identifier: .flightsClimbed, unit: HKUnit.count(), type: .flightsClimbed, displayUnit: "层", format: "%.0f")
+    }
+    
+    private func fetchActiveEnergyBurnedResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        await fetchTodayStatistics(identifier: .activeEnergyBurned, unit: .kilocalorie(), type: .activeEnergyBurned, displayUnit: "千卡", format: "%.0f")
+    }
+    
+    private func fetchBasalEnergyBurnedResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        await fetchTodayStatistics(identifier: .basalEnergyBurned, unit: .kilocalorie(), type: .basalEnergyBurned, displayUnit: "千卡", format: "%.0f")
+    }
+    
+    private func fetchDietaryEnergyConsumedResult() async -> (item: HealthDataItem?, authorizationDenied: Bool) {
+        await fetchTodayStatistics(identifier: .dietaryEnergyConsumed, unit: .kilocalorie(), type: .dietaryEnergyConsumed, displayUnit: "千卡", format: "%.0f")
     }
 }

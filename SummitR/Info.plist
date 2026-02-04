@@ -49,8 +49,8 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSHealthShareUsageDescription</key>
-	<string>需要访问您的健康与健身数据，以展示心率、步数及健身 App 中的锻炼记录</string>
+	<string>需要访问您的健康与健身数据，以展示步数、心率、静息心率、步行距离、爬楼层数、活动能量、静息能量、饮食能量及健身 App 锻炼记录</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>需要访问您的健康数据以展示心率和步数信息</string>
+	<string>需要访问您的健康数据以展示步数、心率及活动能量等信息</string>
 </dict>
 </plist>

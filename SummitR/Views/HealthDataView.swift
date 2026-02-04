@@ -65,7 +65,7 @@ struct AuthorizationView: View {
                 .font(.title2)
                 .fontWeight(.bold)
             
-            Text("为了展示您的心率和步数数据，需要访问健康 App 的数据")
+            Text("为了展示步数、心率、活动能量、步行距离等数据，需要访问健康 App 的数据")
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -98,20 +98,19 @@ struct AuthorizationView: View {
     }
 }
 
-// MARK: - 健康数据列表视图（瀑布流）
+// MARK: - 健康数据列表（平铺，参考健康 App）
 struct HealthDataListView: View {
     @ObservedObject var healthKitManager: HealthKitManager
     
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            LazyVStack(spacing: 12) {
                 ForEach(healthKitManager.healthDataItems) { item in
                     HealthDataCard(item: item)
                 }
             }
             .padding()
         }
-        // 确保即使内容较少也能下拉触发刷新（iOS 16+）
         .scrollBounceBehavior(.always)
         .refreshable {
             await healthKitManager.refreshForHealthTab(forceFetch: true)
@@ -167,10 +166,10 @@ struct HealthDataCard: View {
     
     private func colorForType(_ type: HealthDataItem.HealthDataType) -> Color {
         switch type {
-        case .heartRate:
-            return .red
-        case .stepCount:
-            return .blue
+        case .heartRate, .restingHeartRate: return .red
+        case .stepCount, .distanceWalkingRunning: return .blue
+        case .flightsClimbed: return .green
+        case .activeEnergyBurned, .basalEnergyBurned, .dietaryEnergyConsumed: return .orange
         }
     }
     
