@@ -9,6 +9,7 @@ import Foundation
 import HealthKit
 import Combine
 import SwiftUI
+import CoreLocation
 
 @MainActor
 class HealthKitManager: ObservableObject {
@@ -26,11 +27,12 @@ class HealthKitManager: ObservableObject {
     private var currentFetchTask: Task<Void, Never>?
     private var currentWorkoutFetchTask: Task<Void, Never>?
     
-    // 需要请求的权限（心率、步数、健身记录）
+    // 需要请求的权限（心率、步数、健身记录、健身路线）
     private let readTypes: Set<HKObjectType> = [
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
         HKObjectType.quantityType(forIdentifier: .stepCount)!,
-        HKObjectType.workoutType()
+        HKObjectType.workoutType(),
+        HKSeriesType.workoutRoute()
     ]
     
     init() {
@@ -267,6 +269,82 @@ class HealthKitManager: ObservableObject {
             }
             healthStore.execute(query)
         }
+    }
+    
+    // MARK: - 健身详情（单条锻炼的心率、路线）
+    
+    /// 根据 UUID 获取单条 HKWorkout（用于详情页拉取路线等）
+    func fetchWorkout(byUUID uuid: UUID) async -> HKWorkout? {
+        let workoutType = HKObjectType.workoutType()
+        let predicate = HKQuery.predicateForObject(with: uuid)
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: workoutType,
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if error != nil {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: (samples as? [HKWorkout])?.first)
+            }
+            healthStore.execute(query)
+        }
+    }
+    
+    /// 获取某时间段内的心率样本（用于详情页心率曲线），返回 (时间, bpm)
+    func fetchHeartRateSamples(from start: Date, to end: Date) async -> [(Date, Double)] {
+        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            return []
+        }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
+        return await withCheckedContinuation { continuation in
+            var result: [(Date, Double)] = []
+            let query = HKSampleQuery(
+                sampleType: heartRateType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sortDescriptor]
+            ) { _, samples, error in
+                if let samples = samples as? [HKQuantitySample], error == nil {
+                    let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
+                    result = samples.map { ($0.endDate, $0.quantity.doubleValue(for: unit)) }
+                }
+                continuation.resume(returning: result)
+            }
+            healthStore.execute(query)
+        }
+    }
+    
+    /// 获取某次锻炼的路线坐标（用于详情页地图），需先有该次锻炼的 HKWorkout
+    func fetchWorkoutRouteLocations(workout: HKWorkout) async -> [CLLocation] {
+        let routeType = HKSeriesType.workoutRoute()
+        let predicate = HKQuery.predicateForObjects(from: workout)
+        guard let routeSamples = await withCheckedContinuation({ (cont: CheckedContinuation<[HKSample]?, Never>) in
+            let q = HKSampleQuery(
+                sampleType: routeType,
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, samples, _ in
+                cont.resume(returning: samples)
+            }
+            healthStore.execute(q)
+        }), let route = routeSamples.first as? HKWorkoutRoute else {
+            return []
+        }
+        var allLocations: [CLLocation] = []
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let routeQuery = HKWorkoutRouteQuery(route: route) { _, locationsOrNil, done, error in
+                if let locs = locationsOrNil { allLocations.append(contentsOf: locs) }
+                if done || error != nil { cont.resume() }
+            }
+            healthStore.execute(routeQuery)
+        }
+        return allLocations
     }
     
     // 获取最新心率

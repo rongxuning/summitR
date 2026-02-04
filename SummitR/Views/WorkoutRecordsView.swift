@@ -115,7 +115,10 @@ struct WorkoutRecordsListView: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 ForEach(records) { record in
-                    WorkoutRecordCard(record: record)
+                    NavigationLink(destination: WorkoutDetailView(record: record, healthKitManager: healthKitManager)) {
+                        WorkoutRecordCard(record: record)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding()
