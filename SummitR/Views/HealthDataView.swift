@@ -17,8 +17,8 @@ struct HealthDataView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // 背景
-                Color(red: 0.95, green: 0.95, blue: 0.97)
+                // 与登录页、首页一致的背景
+                AppBackgroundView()
                     .ignoresSafeArea()
                 
                 if healthKitManager.isLoading {

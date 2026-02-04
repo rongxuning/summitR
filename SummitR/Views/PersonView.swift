@@ -8,6 +8,16 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Math helpers (avoid CGFloat/Double ambiguity in Xcode)
+private func sinWave(_ phase: CGFloat) -> CGFloat {
+    // phase: 0...1
+    CGFloat(sin(Double(phase) * 2.0 * Double.pi))
+}
+
+private func sinWaveDouble(_ phase: CGFloat) -> Double {
+    sin(Double(phase) * 2.0 * Double.pi)
+}
+
 struct PersonView: View {
     let exercise: ExerciseType
     let gender: Gender
@@ -149,18 +159,18 @@ struct SquatPersonView: View {
             
             // 身体
             PixelBody(gender: gender, color: bodyColor)
-                .offset(y: CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 8)
+                .offset(y: sinWave(phase) * 8)
             
             // 头部
             PixelHead(gender: gender)
-                .offset(y: -20 + CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 8)
+                .offset(y: -20 + sinWave(phase) * 8)
             
             // 手臂 - 举着杠铃
             PixelArm(color: bodyColor, rotation: 45, offset: CGSize(width: -12, height: -10))
             PixelArm(color: bodyColor, rotation: -45, offset: CGSize(width: 12, height: -10))
             
             // 腿部 - 深蹲动作
-            let legRotation = CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 30 + 15
+            let legRotation = sinWaveDouble(phase) * 30.0 + 15.0
             PixelLeg(color: bodyColor, rotation: legRotation, offset: CGSize(width: -6, height: 20))
             PixelLeg(color: bodyColor, rotation: -legRotation, offset: CGSize(width: 6, height: 20))
         }
@@ -185,12 +195,12 @@ struct DeadliftPersonView: View {
             
             // 身体 - 弯腰动作
             PixelBody(gender: gender, color: bodyColor)
-                .rotationEffect(.degrees(CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 20 + 30))
+                .rotationEffect(.degrees(sinWaveDouble(phase) * 20.0 + 30.0))
                 .offset(y: 10)
             
             // 头部
             PixelHead(gender: gender)
-                .rotationEffect(.degrees(CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 20 + 30))
+                .rotationEffect(.degrees(sinWaveDouble(phase) * 20.0 + 30.0))
                 .offset(x: 0, y: -5)
             
             // 手臂 - 抓杠铃
@@ -218,7 +228,7 @@ struct PlankPersonView: View {
             PixelBody(gender: gender, color: bodyColor)
                 .rotationEffect(.degrees(90))
                 .frame(width: 24, height: 20)
-                .offset(y: CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 2)
+                .offset(y: sinWave(phase) * 2)
             
             // 头部
             PixelHead(gender: gender)
@@ -246,7 +256,7 @@ struct PushupPersonView: View {
     
     var body: some View {
         ZStack {
-            let verticalOffset = CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 8
+            let verticalOffset = sinWave(phase) * 8
             
             // 身体
             PixelBody(gender: gender, color: bodyColor)
@@ -260,7 +270,7 @@ struct PushupPersonView: View {
                 .offset(x: -12, y: verticalOffset)
             
             // 手臂 - 俯卧撑动作
-            let armRotation = CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 30 + 90
+            let armRotation = sinWaveDouble(phase) * 30.0 + 90.0
             PixelArm(color: bodyColor, rotation: armRotation, offset: CGSize(width: -15, height: verticalOffset))
             PixelArm(color: bodyColor, rotation: armRotation, offset: CGSize(width: 15, height: verticalOffset))
             
@@ -287,7 +297,7 @@ struct PullupPersonView: View {
                 .frame(width: 50, height: 4)
                 .offset(y: -30)
             
-            let verticalOffset = CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 10
+            let verticalOffset = sinWave(phase) * 10
             
             // 身体
             PixelBody(gender: gender, color: bodyColor)
@@ -324,7 +334,8 @@ struct RowingPersonView: View {
                 .frame(width: 50, height: 8)
                 .offset(y: 20)
             
-            let armOffset = CGFloat(sin(Double(phase * 2.0 * CGFloat.pi))) * 15
+            let armOffset = sinWave(phase) * 15
+            let armRotationDelta = Double(armOffset)
             
             // 身体
             PixelBody(gender: gender, color: bodyColor)
@@ -335,8 +346,8 @@ struct RowingPersonView: View {
                 .offset(x: armOffset * 0.3, y: -20)
             
             // 手臂 - 划船动作
-            PixelArm(color: bodyColor, rotation: 45 + armOffset, offset: CGSize(width: -12 + armOffset, height: -5))
-            PixelArm(color: bodyColor, rotation: -45 - armOffset, offset: CGSize(width: 12 + armOffset, height: -5))
+            PixelArm(color: bodyColor, rotation: 45 + armRotationDelta, offset: CGSize(width: -12 + armOffset, height: -5))
+            PixelArm(color: bodyColor, rotation: -45 - armRotationDelta, offset: CGSize(width: 12 + armOffset, height: -5))
             
             // 腿部
             PixelLeg(color: bodyColor, rotation: 10, offset: CGSize(width: -6, height: 20))
@@ -361,7 +372,7 @@ struct BikePersonView: View {
                 .frame(width: 30, height: 30)
                 .offset(y: 15)
             
-            let legRotation = phase * 360
+            let legRotation = Double(phase) * 360.0
             
             // 身体
             PixelBody(gender: gender, color: bodyColor)
@@ -377,7 +388,7 @@ struct BikePersonView: View {
             
             // 腿部 - 蹬车动作
             PixelLeg(color: bodyColor, rotation: legRotation, offset: CGSize(width: -6, height: 10))
-            PixelLeg(color: bodyColor, rotation: legRotation + 180, offset: CGSize(width: 6, height: 10))
+            PixelLeg(color: bodyColor, rotation: legRotation + 180.0, offset: CGSize(width: 6, height: 10))
         }
     }
 }

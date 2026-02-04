@@ -16,7 +16,7 @@ struct LoginView: View {
     
     var body: some View {
         ZStack {
-            LoginBackground()
+            AppBackgroundView()
                 .ignoresSafeArea()
             
             VStack(spacing: 22) {
@@ -146,35 +146,6 @@ private struct RoundedInputField: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.55), lineWidth: 1)
         )
-    }
-}
-
-private struct LoginBackground: View {
-    var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.05, green: 0.35, blue: 0.78),
-                    Color(red: 0.07, green: 0.70, blue: 0.92),
-                    Color(red: 0.40, green: 0.90, blue: 0.95)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            
-            // 淡淡的几何纹理（参考图里的线框感）
-            GeometryReader { geo in
-                Path { path in
-                    let step: CGFloat = 36
-                    for y in stride(from: -geo.size.height, to: geo.size.height * 2, by: step) {
-                        path.move(to: CGPoint(x: -40, y: y))
-                        path.addLine(to: CGPoint(x: geo.size.width + 40, y: y + 120))
-                    }
-                }
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            }
-            .ignoresSafeArea()
-        }
     }
 }
 

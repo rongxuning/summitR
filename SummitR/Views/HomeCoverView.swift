@@ -12,8 +12,12 @@ struct HomeCoverView: View {
     
     var body: some View {
         ZStack {
-            // 健身房背景
-            GymBackgroundView()
+            // 背景与登录页一致
+            AppBackgroundView()
+                .ignoresSafeArea()
+            
+            // 轻微暗层，提升前景对比度
+            Color.black.opacity(0.08)
             
             // 动态人物
             VStack {
