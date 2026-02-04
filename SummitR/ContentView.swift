@@ -29,7 +29,8 @@ struct MainTabView: View {
     // Tab 配置
     private let tabs: [(title: String, icon: String, selectedIcon: String)] = [
         ("首页", "house", "house.fill"),
-        ("健康", "heart", "heart.fill")
+        ("健康", "heart", "heart.fill"),
+        ("健身", "figure.run", "figure.run")
     ]
     
     var body: some View {
@@ -42,6 +43,8 @@ struct MainTabView: View {
                         HomeCoverView()
                     case 1:
                         HealthDataView(healthKitManager: healthKitManager)
+                    case 2:
+                        WorkoutRecordsView(healthKitManager: healthKitManager)
                     default:
                         HomeCoverView()
                     }
@@ -58,14 +61,19 @@ struct MainTabView: View {
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: selectedTab) { _, newValue in
-            // 每次切到“健康”tab 自动检查/刷新
-            guard newValue == 1 else { return }
-            Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+            if newValue == 1 {
+                Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+            } else if newValue == 2 {
+                Task { await healthKitManager.refreshForWorkoutTab(forceFetch: true) }
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // 回到前台时，如果当前在健康页，也拉一次最新
-            guard newPhase == .active, selectedTab == 1 else { return }
-            Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+            guard newPhase == .active else { return }
+            if selectedTab == 1 {
+                Task { await healthKitManager.refreshForHealthTab(forceFetch: true) }
+            } else if selectedTab == 2 {
+                Task { await healthKitManager.refreshForWorkoutTab(forceFetch: true) }
+            }
         }
     }
 }

@@ -16,17 +16,21 @@ class HealthKitManager: ObservableObject {
     
     @Published var isAuthorized = false
     @Published var healthDataItems: [HealthDataItem] = []
+    @Published var workoutRecords: [WorkoutRecordItem] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
     
     // 简单节流：避免频繁切换 tab 导致重复请求
     private var lastFetchAt: Date?
+    private var lastWorkoutFetchAt: Date?
     private var currentFetchTask: Task<Void, Never>?
+    private var currentWorkoutFetchTask: Task<Void, Never>?
     
-    // 需要请求的权限
+    // 需要请求的权限（心率、步数、健身记录）
     private let readTypes: Set<HKObjectType> = [
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
-        HKObjectType.quantityType(forIdentifier: .stepCount)!
+        HKObjectType.quantityType(forIdentifier: .stepCount)!,
+        HKObjectType.workoutType()
     ]
     
     init() {
@@ -176,6 +180,93 @@ class HealthKitManager: ObservableObject {
         
         healthDataItems = items.sorted { $0.date > $1.date }
         isLoading = false
+    }
+    
+    // MARK: - 健身记录
+    
+    /// 进入「健身记录」tab 时调用
+    func refreshForWorkoutTab(forceFetch: Bool = false) async {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            errorMessage = "此设备不支持 HealthKit"
+            isAuthorized = false
+            return
+        }
+        errorMessage = nil
+        let status = await requestStatusForAuthorization()
+        switch status {
+        case .unnecessary:
+            isAuthorized = true
+            await fetchWorkoutsIfNeeded(force: forceFetch)
+        case .shouldRequest:
+            isAuthorized = false
+        case .unknown, _:
+            isAuthorized = false
+        }
+    }
+    
+    private func fetchWorkoutsIfNeeded(force: Bool) async {
+        currentWorkoutFetchTask?.cancel()
+        if !force, let last = lastWorkoutFetchAt, Date().timeIntervalSince(last) < 3 {
+            return
+        }
+        lastWorkoutFetchAt = Date()
+        currentWorkoutFetchTask = Task { [weak self] in
+            guard let self else { return }
+            await self.fetchWorkouts()
+        }
+        await currentWorkoutFetchTask?.value
+    }
+    
+    /// 拉取系统健身 App 的锻炼记录（最近 90 天）
+    func fetchWorkouts() async {
+        guard isAuthorized else { return }
+        currentWorkoutFetchTask?.cancel()
+        let workoutType = HKObjectType.workoutType()
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        let calendar = Calendar.current
+        let end = Date()
+        let start = calendar.date(byAdding: .day, value: -90, to: end) ?? end
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let query = HKSampleQuery(
+                sampleType: workoutType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sortDescriptor]
+            ) { [weak self] _, samples, error in
+                Task { @MainActor in
+                    if let error = error {
+                        let nsError = error as NSError
+                        if nsError.domain == HKErrorDomain, nsError.code == HKError.errorAuthorizationDenied.rawValue {
+                            self?.isAuthorized = false
+                            self?.errorMessage = "未获得读取健身记录权限，请在 健康 > 应用 中允许 SummitR 读取体能训练"
+                        } else {
+                            self?.errorMessage = "获取健身记录失败: \(error.localizedDescription)"
+                        }
+                        self?.workoutRecords = []
+                        continuation.resume()
+                        return
+                    }
+                    let workouts = (samples as? [HKWorkout]) ?? []
+                    self?.workoutRecords = workouts.map { w in
+                        WorkoutRecordItem(
+                            id: w.uuid,
+                            activityType: w.workoutActivityType,
+                            activityTypeName: w.workoutActivityType.displayNameZH,
+                            startDate: w.startDate,
+                            endDate: w.endDate,
+                            duration: w.duration,
+                            totalEnergyBurned: w.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
+                            totalDistance: w.totalDistance?.doubleValue(for: .meter()),
+                            sourceName: w.sourceRevision.source.name
+                        )
+                    }
+                    continuation.resume()
+                }
+            }
+            healthStore.execute(query)
+        }
     }
     
     // 获取最新心率
