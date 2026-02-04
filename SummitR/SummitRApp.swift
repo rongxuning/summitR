@@ -11,7 +11,11 @@ import SwiftUI
 struct SummitRApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                AppBackgroundView()
+                    .ignoresSafeArea()
+                ContentView()
+            }
         }
     }
 }
