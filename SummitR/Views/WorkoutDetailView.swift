@@ -40,61 +40,16 @@ struct WorkoutDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 40)
                 } else {
-                    // 名称
-                    detailSection(title: "名称", systemImage: "tag.fill") {
-                        Text(record.activityTypeName)
-                            .font(.headline)
-                    }
-                    
-                    // 时间
-                    detailSection(title: "时间", systemImage: "calendar") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(record.dateFormatted)
-                            Text(record.timeRangeFormatted)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                    // 聚合：名称、时间、类型
+                    detailSection(title: "基本信息", systemImage: "info.circle.fill") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            detailRow(label: "名称", value: record.activityTypeName)
+                            detailRow(label: "时间", value: record.dateFormatted + " " + record.timeRangeFormatted)
+                            detailRow(label: "类型", value: record.activityTypeName)
                         }
                     }
                     
-                    // 类型
-                    detailSection(title: "类型", systemImage: "figure.run") {
-                        Text(record.activityTypeName)
-                    }
-                    
-                    // 耗能等级
-                    detailSection(title: "耗能等级", systemImage: "flame.fill") {
-                        Text(energyLevel)
-                            .foregroundColor(energyLevelColor)
-                    }
-                    
-                    // 训练时间
-                    detailSection(title: "训练时间", systemImage: "timer") {
-                        Text(record.durationFormatted)
-                    }
-                    
-                    // 动态签卡（活动状态）
-                    detailSection(title: "活动状态", systemImage: "checkmark.circle.fill") {
-                        Text("已记录")
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    // 总千卡
-                    detailSection(title: "总千卡", systemImage: "flame.fill") {
-                        Text(record.energyFormatted ?? "—")
-                    }
-                    
-                    // 平均心率
-                    detailSection(title: "平均心率", systemImage: "heart.fill") {
-                        if let avg = averageHeartRate {
-                            Text(String(format: "%.0f bpm", avg))
-                                .foregroundColor(.red)
-                        } else {
-                            Text("—")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    // 心率/时间曲线
+                    // 单独：心率曲线
                     if !heartRateSamples.isEmpty {
                         detailSection(title: "心率曲线", systemImage: "waveform.path.ecg") {
                             HeartRateChartView(samples: heartRateSamples)
@@ -102,7 +57,7 @@ struct WorkoutDetailView: View {
                         }
                     }
                     
-                    // 地点 / 地图
+                    // 单独：地点 / 路线
                     if !routeLocations.isEmpty {
                         detailSection(title: "路线", systemImage: "map.fill") {
                             WorkoutRouteMapView(locations: routeLocations)
@@ -112,7 +67,23 @@ struct WorkoutDetailView: View {
                     } else {
                         detailSection(title: "地点", systemImage: "location") {
                             Text("未记录路线")
+                                .font(.subheadline)
                                 .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // 聚合：能耗等级、训练时间、总千卡、动态千卡、平均心率
+                    detailSection(title: "运动数据", systemImage: "chart.bar.fill") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            detailRow(label: "耗能等级", value: energyLevel, valueColor: energyLevelColor)
+                            detailRow(label: "训练时间", value: record.durationFormatted)
+                            detailRow(label: "总千卡", value: record.energyFormatted ?? "—")
+                            detailRow(label: "动态千卡", value: "—")
+                            if let avg = averageHeartRate {
+                                detailRow(label: "平均心率", value: String(format: "%.0f bpm", avg), valueColor: .red)
+                            } else {
+                                detailRow(label: "平均心率", value: "—")
+                            }
                         }
                     }
                 }
@@ -149,6 +120,19 @@ struct WorkoutDetailView: View {
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
+    }
+    
+    private func detailRow(label: String, value: String, valueColor: Color? = nil) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(valueColor ?? .primary)
+        }
     }
     
     private func loadDetail() async {
