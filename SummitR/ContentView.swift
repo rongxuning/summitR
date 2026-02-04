@@ -18,6 +18,10 @@ struct ContentView: View {
                 LoginView()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            AppBackgroundView().ignoresSafeArea()
+        }
     }
 }
 
@@ -35,8 +39,8 @@ struct MainTabView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                // 内容区域
+            VStack(spacing: 0) {
+                // 内部区域：页面内容
                 Group {
                     switch selectedTab {
                     case 0:
@@ -49,16 +53,14 @@ struct MainTabView: View {
                         HomeCoverView()
                     }
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
-                // 自定义底部导航栏：
-                // - SwiftUI 默认只对齐到“安全区底部”，会导致不吸底
-                // - 这里向下偏移覆盖 safe area，并允许绘制到屏幕最底部
+                // 底部导航栏：固定于屏幕底部
                 CustomTabBar(selectedTab: $selectedTab, tabs: tabs, safeAreaBottom: geometry.safeAreaInsets.bottom)
-                    .padding(.bottom, -geometry.safeAreaInsets.bottom)
-                    .ignoresSafeArea(edges: .bottom)
             }
         }
+        // 整体延伸至屏幕底部，使导航栏贴底、消除底部留白（仅忽略底部安全区）
+        .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: selectedTab) { _, newValue in
             if newValue == 1 {
@@ -89,8 +91,8 @@ struct CustomTabBar: View {
     private let selectedColor = Color(red: 0.35, green: 0.88, blue: 1.00)
     private let unselectedColor = Color.white.opacity(0.72)
     
-    // 标准 tab bar 内容高度（图标/文字都居中在这 49pt 内）
-    private let contentHeight: CGFloat = 49
+    // Tab bar 内容高度（在 49pt 基础上调高约 30%）
+    private let contentHeight: CGFloat = 64
     
     // 两个 tab 作为一组在导航栏内水平居中时的间距与单 tab 宽度
     private let tabSpacing: CGFloat = 56
@@ -129,7 +131,7 @@ struct CustomTabBar: View {
             }
             .frame(height: contentHeight)
             
-            // 让背景覆盖到屏幕底部，但内容仍在 49pt 内居中
+            // 让背景覆盖到屏幕底部，内容在 contentHeight 内居中
             Color.clear.frame(height: max(0, safeAreaBottom))
         }
         .frame(maxWidth: .infinity)

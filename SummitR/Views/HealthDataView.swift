@@ -46,7 +46,7 @@ struct HealthDataView: View {
         .onDisappear { isVisible = false }
         .safeAreaInset(edge: .bottom) {
             // 为底部导航栏留出空间
-            Color.clear.frame(height: 49)
+            Color.clear.frame(height: 64)
         }
     }
 }

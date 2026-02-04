@@ -36,7 +36,7 @@ struct WorkoutRecordsView: View {
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }
         .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: 49)
+            Color.clear.frame(height: 64)
         }
     }
 }
