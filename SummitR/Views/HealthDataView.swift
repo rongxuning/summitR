@@ -98,15 +98,30 @@ struct AuthorizationView: View {
     }
 }
 
-// MARK: - 健康数据列表（平铺，参考健康 App）
+/// 健康数据固定展示顺序（与 HealthDataType 一致，卡片始终展示）
+private let fixedHealthDataTypes: [HealthDataItem.HealthDataType] = [
+    .heartRate,
+    .stepCount,
+    .restingHeartRate,
+    .distanceWalkingRunning,
+    .flightsClimbed,
+    .activeEnergyBurned,
+    .basalEnergyBurned,
+    .dietaryEnergyConsumed
+]
+
+// MARK: - 健康数据列表（固定项平铺，无数据时显示「无数据」不隐藏卡片）
 struct HealthDataListView: View {
     @ObservedObject var healthKitManager: HealthKitManager
     
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(healthKitManager.healthDataItems) { item in
-                    HealthDataCard(item: item)
+                ForEach(fixedHealthDataTypes, id: \.self) { type in
+                    HealthDataCard(
+                        type: type,
+                        item: healthKitManager.healthDataItems.first { $0.type == type }
+                    )
                 }
             }
             .padding()
@@ -118,40 +133,43 @@ struct HealthDataListView: View {
     }
 }
 
-// MARK: - 健康数据卡片
+// MARK: - 健康数据卡片（有数据显示数值，无数据显示「无数据」，卡片不隐藏）
 struct HealthDataCard: View {
-    let item: HealthDataItem
+    let type: HealthDataItem.HealthDataType
+    let item: HealthDataItem?
     
     var body: some View {
         HStack(spacing: 16) {
             // 图标
             ZStack {
                 Circle()
-                    .fill(colorForType(item.type).opacity(0.2))
+                    .fill(colorForType(type).opacity(0.2))
                     .frame(width: 50, height: 50)
                 
-                Image(systemName: item.type.icon)
+                Image(systemName: type.icon)
                     .font(.system(size: 24))
-                    .foregroundColor(colorForType(item.type))
+                    .foregroundColor(colorForType(type))
             }
             
             // 数据信息
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.type.displayName)
+                Text(type.displayName)
                     .font(.headline)
                     .foregroundColor(.black)
                 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(item.formattedValue)
+                    Text(valueText)
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.black)
                     
-                    Text(item.unit)
-                        .font(.subheadline)
-                        .foregroundColor(.black)
+                    if let item = item {
+                        Text(item.unit)
+                            .font(.subheadline)
+                            .foregroundColor(.black)
+                    }
                 }
                 
-                Text(formatDate(item.date))
+                Text(dateText)
                     .font(.caption)
                     .foregroundColor(.black)
             }
@@ -162,6 +180,14 @@ struct HealthDataCard: View {
         .background(Color.white)
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+    }
+    
+    private var valueText: String {
+        item?.formattedValue ?? "无数据"
+    }
+    
+    private var dateText: String {
+        item.map { formatDate($0.date) } ?? "—"
     }
     
     private func colorForType(_ type: HealthDataItem.HealthDataType) -> Color {

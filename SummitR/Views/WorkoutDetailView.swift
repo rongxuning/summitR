@@ -66,8 +66,15 @@ struct WorkoutDetailView: View {
                     if !heartRateSamples.isEmpty {
                         detailSection(title: "心率曲线", systemImage: "waveform.path.ecg") {
                             VStack(alignment: .leading, spacing: 16) {
-                                HeartRateChartView(samples: heartRateSamples)
-                                    .frame(height: 160)
+                                HeartRateChartView(
+                                    samples: heartRateSamples,
+                                    startDate: record.startDate,
+                                    endDate: record.endDate,
+                                    maxHR: maxHeartRate,
+                                    restingHR: restingHeartRate ?? 60,
+                                    reserve: heartRateReserve
+                                )
+                                .frame(height: 200)
                                 HeartRateStatsView(
                                     maxHR: maxHeartRate,
                                     reserve: heartRateReserve,
@@ -162,33 +169,155 @@ struct WorkoutDetailView: View {
     }
 }
 
-// MARK: - 心率曲线（简单折线）
+// MARK: - 心率曲线（带 X/Y 轴、5 分钟刻度、六区 Y 轴，实线轴 + 虚线网格）
 struct HeartRateChartView: View {
     let samples: [(Date, Double)]
+    let startDate: Date
+    let endDate: Date
+    let maxHR: Double
+    let restingHR: Double
+    let reserve: Double
     
-    private var minHR: Double { (samples.map(\.1).min() ?? 0) - 10 }
-    private var maxHR: Double { (samples.map(\.1).max() ?? 100) + 10 }
-    private var range: Double { max(maxHR - minHR, 1) }
+    private let leftMargin: CGFloat = 44
+    private let rightMargin: CGFloat = 12
+    private let topMargin: CGFloat = 12
+    private let bottomMargin: CGFloat = 28
+    
+    /// Y 轴：六区上界（Karvonen 50%–100%），共 7 个刻度
+    private var yTicks: [Double] {
+        (0...6).map { i in
+            let pct = [0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 1.00][i]
+            return restingHR + reserve * pct
+        }
+    }
+    
+    /// Y 轴下限：本次训练最小心率（略留边距），无数据时用六区下限
+    private var yMin: Double {
+        guard let sampleMin = samples.map(\.1).min() else { return yTicks.first ?? restingHR }
+        return sampleMin - 2
+    }
+    private var yMax: Double { yTicks.last ?? maxHR }
+    private var yRange: Double { max(yMax - yMin, 1) }
+    
+    /// 落在 [yMin, yMax] 内的六区刻度（用于网格与 Y 轴标签）
+    private var visibleYTicks: [Double] {
+        yTicks.filter { $0 >= yMin && $0 <= yMax }
+    }
+    
+    /// Y 轴显示的刻度值：本次训练最小心率 + 落在范围内的六区刻度（去重排序）
+    private var displayedYLabels: [Double] {
+        let bottom = [yMin]
+        let inRange = yTicks.filter { $0 > yMin && $0 <= yMax }
+        return (bottom + inRange).sorted()
+    }
+    
+    /// X 轴：从 startDate 起每 5 分钟一个刻度
+    private var xTickDates: [Date] {
+        let duration = endDate.timeIntervalSince(startDate)
+        let step: TimeInterval = 5 * 60
+        var list: [Date] = [startDate]
+        var t = startDate.addingTimeInterval(step)
+        while t <= endDate {
+            list.append(t)
+            t = t.addingTimeInterval(step)
+        }
+        return list
+    }
+    
+    private var duration: TimeInterval { endDate.timeIntervalSince(startDate) }
+    
+    private static let xLabelFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
     
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let count = max(samples.count, 1)
-            let stepX = count > 1 ? w / CGFloat(count - 1) : w
+            let plotW = w - leftMargin - rightMargin
+            let plotH = h - topMargin - bottomMargin
             
-            Path { path in
-                for (i, sample) in samples.enumerated() {
-                    let x = CGFloat(i) * stepX
-                    let y = h - CGFloat((sample.1 - minHR) / range) * h
-                    if i == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
+            ZStack(alignment: .topLeading) {
+                // 虚线网格：水平（六区边界中落在 [yMin,yMax] 内的，不含最下最上）
+                ForEach(Array(visibleYTicks.dropFirst().dropLast().enumerated()), id: \.offset) { _, hr in
+                    let y = topMargin + plotH * (1 - CGFloat((hr - yMin) / yRange))
+                    Path { path in
+                        path.move(to: CGPoint(x: leftMargin, y: y))
+                        path.addLine(to: CGPoint(x: w - rightMargin, y: y))
+                    }
+                    .stroke(Color.black.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                }
+                // 虚线网格：垂直（每 5 分钟）
+                ForEach(Array(xTickDates.dropFirst().enumerated()), id: \.offset) { _, date in
+                    let t = date.timeIntervalSince(startDate)
+                    let x = leftMargin + CGFloat(t / duration) * plotW
+                    Group {
+                        if x < w - rightMargin - 1 {
+                            Path { path in
+                                path.move(to: CGPoint(x: x, y: topMargin))
+                                path.addLine(to: CGPoint(x: x, y: h - bottomMargin))
+                            }
+                            .stroke(Color.black.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        }
                     }
                 }
+                
+                // 实线 X 轴
+                Path { path in
+                    path.move(to: CGPoint(x: leftMargin, y: h - bottomMargin))
+                    path.addLine(to: CGPoint(x: w - rightMargin, y: h - bottomMargin))
+                }
+                .stroke(Color.black, lineWidth: 1.5)
+                
+                // 实线 Y 轴
+                Path { path in
+                    path.move(to: CGPoint(x: leftMargin, y: topMargin))
+                    path.addLine(to: CGPoint(x: leftMargin, y: h - bottomMargin))
+                }
+                .stroke(Color.black, lineWidth: 1.5)
+                
+                // 心率折线
+                if !samples.isEmpty, duration > 0 {
+                    Path { path in
+                        for (i, sample) in samples.enumerated() {
+                            let t = sample.0.timeIntervalSince(startDate)
+                            let x = leftMargin + CGFloat(t / duration) * plotW
+                            let y = topMargin + plotH * (1 - CGFloat((sample.1 - yMin) / yRange))
+                            let point = CGPoint(x: x, y: y)
+                            if i == 0 {
+                                path.move(to: point)
+                            } else {
+                                path.addLine(to: point)
+                            }
+                        }
+                    }
+                    .stroke(Color.red, lineWidth: 2)
+                }
+                
+                // Y 轴标签：底部为本次训练最小心率，其余为落在范围内的六区刻度
+                ForEach(Array(displayedYLabels.enumerated()), id: \.offset) { _, hr in
+                    let y = topMargin + plotH * (1 - CGFloat((hr - yMin) / yRange))
+                    Text("\(Int(hr))")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.black)
+                        .frame(width: leftMargin - 8, alignment: .trailing)
+                        .position(x: (leftMargin - 8) / 2 + 4, y: y)
+                }
+                
+                // X 轴标签（时间，起始 + 每 5 分钟，与刻度对齐）
+                ForEach(Array(xTickDates.enumerated()), id: \.offset) { _, date in
+                    let t = date.timeIntervalSince(startDate)
+                    let x = leftMargin + CGFloat(t / duration) * plotW
+                    Text(Self.xLabelFormatter.string(from: date))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.black)
+                        .frame(width: 36, alignment: .center)
+                        .position(x: x, y: h - bottomMargin + 14)
+                }
             }
-            .stroke(Color.red, lineWidth: 2)
         }
     }
 }
