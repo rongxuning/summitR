@@ -15,7 +15,20 @@ struct WorkoutDetailView: View {
     
     @State private var heartRateSamples: [(Date, Double)] = []
     @State private var routeLocations: [CLLocation] = []
+    @State private var restingHeartRate: Double?
+    @State private var userAge: Int?
     @State private var isLoadingDetail = true
+    
+    /// 最大心率（公式：206.9 - 0.67×年龄），年龄从健康 App 获取，取不到用 34
+    private var maxHeartRate: Double {
+        206.9 - (0.67 * Double(userAge ?? 34))
+    }
+    
+    /// 储备心率 = 最大心率 - 静息心率（静息无数据时用 60）
+    private var heartRateReserve: Double {
+        let resting = restingHeartRate ?? 60
+        return Swift.max(0, maxHeartRate - resting)
+    }
     
     private var averageHeartRate: Double? {
         guard !heartRateSamples.isEmpty else { return nil }
@@ -49,11 +62,18 @@ struct WorkoutDetailView: View {
                         }
                     }
                     
-                    // 单独：心率曲线
+                    // 单独：心率曲线 + 最大/储备/六区
                     if !heartRateSamples.isEmpty {
                         detailSection(title: "心率曲线", systemImage: "waveform.path.ecg") {
-                            HeartRateChartView(samples: heartRateSamples)
-                                .frame(height: 160)
+                            VStack(alignment: .leading, spacing: 16) {
+                                HeartRateChartView(samples: heartRateSamples)
+                                    .frame(height: 160)
+                                HeartRateStatsView(
+                                    maxHR: maxHeartRate,
+                                    reserve: heartRateReserve,
+                                    restingHR: restingHeartRate ?? 60
+                                )
+                            }
                         }
                     }
                     
@@ -68,19 +88,19 @@ struct WorkoutDetailView: View {
                         detailSection(title: "地点", systemImage: "location") {
                             Text("未记录路线")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.black)
                         }
                     }
                     
                     // 聚合：能耗等级、训练时间、总千卡、动态千卡、平均心率
                     detailSection(title: "运动数据", systemImage: "chart.bar.fill") {
                         VStack(alignment: .leading, spacing: 12) {
-                            detailRow(label: "耗能等级", value: energyLevel, valueColor: energyLevelColor)
+                            detailRow(label: "耗能等级", value: energyLevel)
                             detailRow(label: "训练时间", value: record.durationFormatted)
                             detailRow(label: "总千卡", value: record.energyFormatted ?? "—")
                             detailRow(label: "动态千卡", value: "—")
                             if let avg = averageHeartRate {
-                                detailRow(label: "平均心率", value: String(format: "%.0f bpm", avg), valueColor: .red)
+                                detailRow(label: "平均心率", value: String(format: "%.0f bpm", avg))
                             } else {
                                 detailRow(label: "平均心率", value: "—")
                             }
@@ -98,21 +118,12 @@ struct WorkoutDetailView: View {
         }
     }
     
-    private var energyLevelColor: Color {
-        switch energyLevel {
-        case "高": return .orange
-        case "中": return .green
-        case "低": return .blue
-        default: return .secondary
-        }
-    }
-    
     private func detailSection<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(.secondary)
+                .foregroundColor(.black)
             content()
         }
         .padding()
@@ -122,16 +133,16 @@ struct WorkoutDetailView: View {
         .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
     
-    private func detailRow(label: String, value: String, valueColor: Color? = nil) -> some View {
+    private func detailRow(label: String, value: String) -> some View {
         HStack {
             Text(label)
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(.black)
             Spacer()
             Text(value)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(valueColor ?? .primary)
+                .foregroundColor(.black)
         }
     }
     
@@ -141,6 +152,8 @@ struct WorkoutDetailView: View {
         
         let hrSamples = await healthKitManager.fetchHeartRateSamples(from: record.startDate, to: record.endDate)
         heartRateSamples = hrSamples
+        restingHeartRate = await healthKitManager.fetchRestingHeartRateValue()
+        userAge = await healthKitManager.fetchUserAge()
         
         if let workout = await healthKitManager.fetchWorkout(byUUID: record.id) {
             let locs = await healthKitManager.fetchWorkoutRouteLocations(workout: workout)
@@ -179,6 +192,86 @@ struct HeartRateChartView: View {
         }
     }
 }
+
+// MARK: - 心率曲线下方数据：最大心率、储备心率、六区模型
+struct HeartRateStatsView: View {
+    let maxHR: Double?
+    let reserve: Double?
+    let restingHR: Double
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let max = maxHR {
+                HStack {
+                    Text("最大心率")
+                        .font(.subheadline)
+                        .foregroundColor(.black)
+                    Spacer()
+                    Text(String(format: "%.0f bpm", max))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.black)
+                }
+            }
+            if let r = reserve {
+                HStack {
+                    Text("储备心率")
+                        .font(.subheadline)
+                        .foregroundColor(.black)
+                    Spacer()
+                    Text(String(format: "%.0f bpm（静息 %.0f）", r, restingHR))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.black)
+                }
+            }
+            if reserve != nil {
+                Text("六区模型（Karvonen）")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.black)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(zoneRangesForStats.enumerated()), id: \.offset) { _, zone in
+                        zoneRow(name: zone.name, low: zoneLow(zone.low), high: zoneHigh(zone.high))
+                    }
+                }
+            }
+        }
+    }
+    
+    private func zoneLow(_ pct: Double) -> Int {
+        guard let r = reserve else { return 0 }
+        return Int(restingHR + r * pct)
+    }
+    
+    private func zoneHigh(_ pct: Double) -> Int {
+        guard let r = reserve else { return 0 }
+        return Int(restingHR + r * pct)
+    }
+    
+    private func zoneRow(name: String, low: Int, high: Int) -> some View {
+        HStack {
+            Text(name)
+                .font(.caption)
+                .foregroundColor(.black)
+            Spacer()
+            Text("\(low)–\(high) bpm")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.black)
+        }
+    }
+}
+
+// 六区模型百分比（与 WorkoutDetailView.zoneRanges 一致，供 HeartRateStatsView 使用）
+private let zoneRangesForStats: [(name: String, low: Double, high: Double)] = [
+    ("Z1 恢复", 0.50, 0.60),
+    ("Z2 有氧", 0.60, 0.70),
+    ("Z3 节奏", 0.70, 0.80),
+    ("Z4 阈值", 0.80, 0.90),
+    ("Z5 VO2max", 0.90, 0.95),
+    ("Z6 无氧", 0.95, 1.00)
+]
 
 // MARK: - 路线地图（带折线）
 struct WorkoutRouteMapView: View {

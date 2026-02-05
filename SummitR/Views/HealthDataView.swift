@@ -139,21 +139,21 @@ struct HealthDataCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.type.displayName)
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.black)
                 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(item.formattedValue)
                         .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.black)
                     
                     Text(item.unit)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.black)
                 }
                 
                 Text(formatDate(item.date))
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.black)
             }
             
             Spacer()

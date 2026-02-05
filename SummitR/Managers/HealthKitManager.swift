@@ -20,6 +20,15 @@ class HealthKitManager: ObservableObject {
     @Published var workoutRecords: [WorkoutRecordItem] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    /// 是否还有更多健身记录可加载（用于滚动翻页）
+    @Published var workoutHasMore = false
+    /// 是否正在加载下一页（不阻塞列表，底部显示小 loading）
+    @Published var workoutLoadingMore = false
+    
+    // 健身记录分页：每页条数
+    private let workoutPageSize = 30
+    // 查询时间范围上限（最早往前推多少年）
+    private let workoutQueryYearsBack = 10
     
     // 简单节流：避免频繁切换 tab 导致重复请求
     private var lastFetchAt: Date?
@@ -41,6 +50,7 @@ class HealthKitManager: ObservableObject {
         if let t = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) { types.insert(t) }
         if let t = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) { types.insert(t) }
         if let t = HKQuantityType.quantityType(forIdentifier: .dietaryEnergyConsumed) { types.insert(t) }
+        if let t = HKCharacteristicType.characteristicType(forIdentifier: .dateOfBirth) { types.insert(t) }
         return types
     }
     
@@ -237,7 +247,7 @@ class HealthKitManager: ObservableObject {
         await currentWorkoutFetchTask?.value
     }
     
-    /// 拉取系统健身 App 的锻炼记录（最近 90 天）
+    /// 拉取首页健身记录（按时间倒序，每页 workoutPageSize 条）
     func fetchWorkouts() async {
         guard isAuthorized else { return }
         currentWorkoutFetchTask?.cancel()
@@ -245,14 +255,14 @@ class HealthKitManager: ObservableObject {
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let calendar = Calendar.current
         let end = Date()
-        let start = calendar.date(byAdding: .day, value: -90, to: end) ?? end
+        let start = calendar.date(byAdding: .year, value: -workoutQueryYearsBack, to: end) ?? end
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
         
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let query = HKSampleQuery(
                 sampleType: workoutType,
                 predicate: predicate,
-                limit: HKObjectQueryNoLimit,
+                limit: workoutPageSize,
                 sortDescriptors: [sortDescriptor]
             ) { [weak self] _, samples, error in
                 Task { @MainActor in
@@ -265,6 +275,7 @@ class HealthKitManager: ObservableObject {
                             self?.errorMessage = "获取健身记录失败: \(error.localizedDescription)"
                         }
                         self?.workoutRecords = []
+                        self?.workoutHasMore = false
                         continuation.resume()
                         return
                     }
@@ -282,11 +293,58 @@ class HealthKitManager: ObservableObject {
                             sourceName: w.sourceRevision.source.name
                         )
                     }
+                    let pageSize = self?.workoutPageSize ?? 30
+                    self?.workoutHasMore = (workouts.count == pageSize)
                     continuation.resume()
                 }
             }
             healthStore.execute(query)
         }
+    }
+    
+    /// 加载下一页健身记录（滚动到底部时调用）
+    func loadMoreWorkouts() async {
+        guard isAuthorized, workoutHasMore, !workoutLoadingMore else { return }
+        guard let oldest = workoutRecords.last else { return }
+        
+        workoutLoadingMore = true
+        defer { workoutLoadingMore = false }
+        
+        let workoutType = HKObjectType.workoutType()
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        let calendar = Calendar.current
+        let end = oldest.startDate
+        let start = calendar.date(byAdding: .year, value: -workoutQueryYearsBack, to: Date()) ?? end
+        
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        
+        let newWorkouts: [HKWorkout] = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: workoutType,
+                predicate: predicate,
+                limit: workoutPageSize,
+                sortDescriptors: [sortDescriptor]
+            ) { _, samples, _ in
+                continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+            }
+            healthStore.execute(query)
+        }
+        
+        let newItems = newWorkouts.map { w in
+            WorkoutRecordItem(
+                id: w.uuid,
+                activityType: w.workoutActivityType,
+                activityTypeName: w.workoutActivityType.displayNameZH,
+                startDate: w.startDate,
+                endDate: w.endDate,
+                duration: w.duration,
+                totalEnergyBurned: w.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
+                totalDistance: w.totalDistance?.doubleValue(for: .meter()),
+                sourceName: w.sourceRevision.source.name
+            )
+        }
+        workoutRecords.append(contentsOf: newItems)
+        workoutHasMore = newWorkouts.count == workoutPageSize
     }
     
     // MARK: - 健身详情（单条锻炼的心率、路线）
@@ -309,6 +367,24 @@ class HealthKitManager: ObservableObject {
                 continuation.resume(returning: (samples as? [HKWorkout])?.first)
             }
             healthStore.execute(query)
+        }
+    }
+    
+    /// 获取最新静息心率（用于详情页储备心率计算），无数据时返回 nil
+    func fetchRestingHeartRateValue() async -> Double? {
+        let r = await fetchRestingHeartRateResult()
+        return r.item?.value
+    }
+    
+    /// 从健康 App 获取用户年龄（根据出生日期计算），取不到时返回 nil（调用方可用默认值如 34）
+    func fetchUserAge() async -> Int? {
+        do {
+            let components = try healthStore.dateOfBirthComponents()
+            guard let birthYear = components.year else { return nil }
+            let thisYear = Calendar.current.component(.year, from: Date())
+            return thisYear - birthYear
+        } catch {
+            return nil
         }
     }
     

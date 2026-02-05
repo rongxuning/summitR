@@ -18,6 +18,7 @@ struct WorkoutRecordsView: View {
                 
                 if healthKitManager.isLoading {
                     ProgressView("加载中...")
+                        .foregroundColor(.black)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if !healthKitManager.isAuthorized {
                     WorkoutAuthorizationView(healthKitManager: healthKitManager)
@@ -49,22 +50,23 @@ struct WorkoutAuthorizationView: View {
         VStack(spacing: 24) {
             Image(systemName: "figure.run")
                 .font(.system(size: 80))
-                .foregroundColor(Color(red: 0.35, green: 0.88, blue: 1.00))
+                .foregroundColor(.black)
             
             Text("需要访问健身记录")
                 .font(.title2)
                 .fontWeight(.bold)
+                .foregroundColor(.black)
             
             Text("从系统的「健身」或「健康」App 读取您的锻炼记录，以卡片形式展示每次训练的数据")
                 .font(.body)
-                .foregroundColor(.secondary)
+                .foregroundColor(.black)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
             
             if let errorMessage = healthKitManager.errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.black)
                     .padding(.horizontal)
             }
             
@@ -92,13 +94,14 @@ struct WorkoutEmptyView: View {
         VStack(spacing: 16) {
             Image(systemName: "figure.run.circle")
                 .font(.system(size: 64))
-                .foregroundColor(.secondary)
+                .foregroundColor(.black)
             Text("暂无健身记录")
                 .font(.title3)
                 .fontWeight(.medium)
+                .foregroundColor(.black)
             Text("在「健身」或「健康」App 中记录锻炼后，会在这里显示")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(.black)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
         }
@@ -106,27 +109,109 @@ struct WorkoutEmptyView: View {
     }
 }
 
-// MARK: - 健身记录列表（卡片）
+// MARK: - 用于根据滚动位置计算「当前顶部」记录
+private struct WorkoutRowMinYKey: PreferenceKey {
+    static var defaultValue: [UUID: CGFloat] { [:] }
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue()) { _, n in n }
+    }
+}
+
+private func workoutYearMonthString(from date: Date) -> String {
+    let cal = Calendar.current
+    let y = cal.component(.year, from: date)
+    let m = cal.component(.month, from: date)
+    return String(format: "%d年%02d月", y, m)
+}
+
+// MARK: - 健身记录列表（卡片，支持滚动加载更多，左上角悬浮年月）
 struct WorkoutRecordsListView: View {
     let records: [WorkoutRecordItem]
     @ObservedObject var healthKitManager: HealthKitManager
+    /// 当前位于屏幕顶部区域的记录对应的年月（用于左上角悬浮展示）
+    @State private var topYearMonth: String?
     
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                ForEach(records) { record in
-                    NavigationLink(destination: WorkoutDetailView(record: record, healthKitManager: healthKitManager)) {
-                        WorkoutRecordCard(record: record)
+        ZStack(alignment: .topLeading) {
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(records) { record in
+                        rowContent(record: record)
                     }
-                    .buttonStyle(.plain)
+                    if healthKitManager.workoutLoadingMore {
+                        HStack {
+                            ProgressView()
+                            Text("加载更多...")
+                                .font(.subheadline)
+                                .foregroundColor(.black)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                    }
+                }
+                .padding()
+            }
+            .coordinateSpace(name: "workoutScroll")
+            .scrollBounceBehavior(.always)
+            .refreshable {
+                await healthKitManager.refreshForWorkoutTab(forceFetch: true)
+            }
+            .onPreferenceChange(WorkoutRowMinYKey.self) { minYs in
+                updateTopYearMonth(from: minYs)
+            }
+            .onAppear {
+                if let first = records.first {
+                    topYearMonth = workoutYearMonthString(from: first.startDate)
                 }
             }
-            .padding()
+            .onChange(of: records.count) { _, _ in
+                if topYearMonth == nil, let first = records.first {
+                    topYearMonth = workoutYearMonthString(from: first.startDate)
+                }
+            }
+            
+            if let yearMonth = topYearMonth {
+                Text(yearMonth)
+                    .font(.headline)
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.leading, 16)
+                    .padding(.top, 8)
+                    .allowsHitTesting(false)
+            }
         }
-        .scrollBounceBehavior(.always)
-        .refreshable {
-            await healthKitManager.refreshForWorkoutTab(forceFetch: true)
+    }
+    
+    @ViewBuilder
+    private func rowContent(record: WorkoutRecordItem) -> some View {
+        NavigationLink(destination: WorkoutDetailView(record: record, healthKitManager: healthKitManager)) {
+            WorkoutRecordCard(record: record)
         }
+        .buttonStyle(.plain)
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(
+                    key: WorkoutRowMinYKey.self,
+                    value: [record.id: g.frame(in: .named("workoutScroll")).minY]
+                )
+            }
+        )
+        .onAppear {
+            if record.id == records.last?.id {
+                Task { await healthKitManager.loadMoreWorkouts() }
+            }
+        }
+    }
+    
+    private func updateTopYearMonth(from minYs: [UUID: CGFloat]) {
+        guard !records.isEmpty else { return }
+        let topThreshold: CGFloat = 140
+        let visible = minYs.filter { $0.value <= topThreshold }
+        guard let topId = visible.max(by: { $0.value < $1.value })?.key else { return }
+        guard let record = records.first(where: { $0.id == topId }) else { return }
+        topYearMonth = workoutYearMonthString(from: record.startDate)
     }
 }
 
@@ -135,7 +220,6 @@ struct WorkoutRecordCard: View {
     let record: WorkoutRecordItem
     
     private let cardBackground = Color.white
-    private let accentColor = Color(red: 0.35, green: 0.88, blue: 1.00)
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -143,14 +227,14 @@ struct WorkoutRecordCard: View {
             HStack {
                 Image(systemName: iconForActivity(record.activityType))
                     .font(.system(size: 22))
-                    .foregroundColor(accentColor)
+                    .foregroundColor(.black)
                 Text(record.activityTypeName)
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.black)
                 Spacer()
                 Text(record.dateFormatted)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.black)
             }
             
             // 时间段
@@ -160,7 +244,7 @@ struct WorkoutRecordCard: View {
                 Text(record.timeRangeFormatted)
                     .font(.subheadline)
             }
-            .foregroundColor(.secondary)
+            .foregroundColor(.black)
             
             // 时长
             HStack {
@@ -168,7 +252,7 @@ struct WorkoutRecordCard: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
             }
-            .foregroundColor(.primary)
+            .foregroundColor(.black)
             
             // 能量 / 距离（若有）
             if record.energyFormatted != nil || record.distanceFormatted != nil {
@@ -180,7 +264,7 @@ struct WorkoutRecordCard: View {
                             Text(energy)
                                 .font(.subheadline)
                         }
-                        .foregroundColor(.orange)
+                        .foregroundColor(.black)
                     }
                     if let distance = record.distanceFormatted {
                         HStack(spacing: 4) {
@@ -189,7 +273,7 @@ struct WorkoutRecordCard: View {
                             Text(distance)
                                 .font(.subheadline)
                         }
-                        .foregroundColor(.blue)
+                        .foregroundColor(.black)
                     }
                 }
             }
@@ -198,7 +282,7 @@ struct WorkoutRecordCard: View {
             if let source = record.sourceName, !source.isEmpty {
                 Text("来源：\(source)")
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.black)
             }
         }
         .padding()
