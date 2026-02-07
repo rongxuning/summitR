@@ -78,7 +78,8 @@ struct WorkoutDetailView: View {
                                 HeartRateStatsView(
                                     maxHR: maxHeartRate,
                                     reserve: heartRateReserve,
-                                    restingHR: restingHeartRate ?? 60
+                                    restingHR: restingHeartRate ?? 60,
+                                    timeInZones: timeInZonesFromSamples(heartRateSamples)
                                 )
                             }
                         }
@@ -167,6 +168,34 @@ struct WorkoutDetailView: View {
             routeLocations = locs
         }
     }
+    
+    /// 根据心率样本与六区边界，统计各区占用时间（秒），返回 6 个元素的数组
+    private func timeInZonesFromSamples(_ samples: [(Date, Double)]) -> [TimeInterval]? {
+        guard !samples.isEmpty, heartRateReserve > 0 else { return nil }
+        let resting = restingHeartRate ?? 60
+        let start = record.startDate
+        let end = record.endDate
+        var zones: [TimeInterval] = Array(repeating: 0, count: 6)
+        
+        func zoneIndex(hr: Double) -> Int {
+            let pct = (hr - resting) / heartRateReserve
+            if pct < 0.60 { return 0 }
+            if pct < 0.70 { return 1 }
+            if pct < 0.80 { return 2 }
+            if pct < 0.90 { return 3 }
+            if pct < 0.95 { return 4 }
+            return 5
+        }
+        
+        let firstDate = samples[0].0
+        zones[zoneIndex(hr: samples[0].1)] += firstDate.timeIntervalSince(start)
+        for i in 0..<(samples.count - 1) {
+            let dt = samples[i + 1].0.timeIntervalSince(samples[i].0)
+            zones[zoneIndex(hr: samples[i].1)] += dt
+        }
+        zones[zoneIndex(hr: samples.last!.1)] += end.timeIntervalSince(samples.last!.0)
+        return zones
+    }
 }
 
 // MARK: - 心率曲线（带 X/Y 轴、5 分钟刻度、六区 Y 轴，实线轴 + 虚线网格）
@@ -226,6 +255,34 @@ struct HeartRateChartView: View {
     
     private var duration: TimeInterval { endDate.timeIntervalSince(startDate) }
     
+    /// 六区颜色（与 HeartRateStatsView 一致）
+    private static let zoneColors: [Color] = [
+        .blue, .cyan, .green, .yellow, .orange, .red
+    ]
+    
+    private func zoneIndex(hr: Double) -> Int {
+        guard reserve > 0 else { return 0 }
+        let pct = (hr - restingHR) / reserve
+        if pct < 0.60 { return 0 }
+        if pct < 0.70 { return 1 }
+        if pct < 0.80 { return 2 }
+        if pct < 0.90 { return 3 }
+        if pct < 0.95 { return 4 }
+        return 5
+    }
+    
+    private func zoneColor(for hr: Double) -> Color {
+        let idx = zoneIndex(hr: hr)
+        return idx < Self.zoneColors.count ? Self.zoneColors[idx] : .red
+    }
+    
+    private func pointForSample(_ sample: (Date, Double), w: CGFloat, h: CGFloat, plotW: CGFloat, plotH: CGFloat) -> CGPoint {
+        let t = sample.0.timeIntervalSince(startDate)
+        let x = leftMargin + CGFloat(t / duration) * plotW
+        let y = topMargin + plotH * (1 - CGFloat((sample.1 - yMin) / yRange))
+        return CGPoint(x: x, y: y)
+    }
+    
     private static let xLabelFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
@@ -279,22 +336,17 @@ struct HeartRateChartView: View {
                 }
                 .stroke(Color.black, lineWidth: 1.5)
                 
-                // 心率折线
-                if !samples.isEmpty, duration > 0 {
-                    Path { path in
-                        for (i, sample) in samples.enumerated() {
-                            let t = sample.0.timeIntervalSince(startDate)
-                            let x = leftMargin + CGFloat(t / duration) * plotW
-                            let y = topMargin + plotH * (1 - CGFloat((sample.1 - yMin) / yRange))
-                            let point = CGPoint(x: x, y: y)
-                            if i == 0 {
-                                path.move(to: point)
-                            } else {
-                                path.addLine(to: point)
-                            }
+                // 心率折线（按六区着色）
+                if samples.count >= 2, duration > 0 {
+                    ForEach(Array(0..<(samples.count - 1)), id: \.self) { i in
+                        let p0 = pointForSample(samples[i], w: w, h: h, plotW: plotW, plotH: plotH)
+                        let p1 = pointForSample(samples[i + 1], w: w, h: h, plotW: plotW, plotH: plotH)
+                        Path { path in
+                            path.move(to: p0)
+                            path.addLine(to: p1)
                         }
+                        .stroke(zoneColor(for: samples[i].1), lineWidth: 2)
                     }
-                    .stroke(Color.red, lineWidth: 2)
                 }
                 
                 // Y 轴标签：底部为本次训练最小心率，其余为落在范围内的六区刻度
@@ -322,11 +374,13 @@ struct HeartRateChartView: View {
     }
 }
 
-// MARK: - 心率曲线下方数据：最大心率、储备心率、六区模型
+// MARK: - 心率曲线下方数据：最大心率、储备心率、六区模型（含各区占用时间）
 struct HeartRateStatsView: View {
     let maxHR: Double?
     let reserve: Double?
     let restingHR: Double
+    /// 六区各自占用时间（秒），与 zoneRangesForStats 顺序一致
+    let timeInZones: [TimeInterval]?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -359,9 +413,16 @@ struct HeartRateStatsView: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.black)
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(zoneRangesForStats.enumerated()), id: \.offset) { _, zone in
-                        zoneRow(name: zone.name, low: zoneLow(zone.low), high: zoneHigh(zone.high))
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(zoneRangesForStats.enumerated()), id: \.offset) { idx, zone in
+                        zoneRow(
+                            name: zone.name,
+                            low: zoneLow(zone.low),
+                            high: zoneHigh(zone.high),
+                            duration: timeInZones.flatMap { idx < $0.count ? $0[idx] : nil },
+                            totalDuration: timeInZones?.reduce(0, +) ?? 0,
+                            zoneIndex: idx
+                        )
                     }
                 }
             }
@@ -378,28 +439,95 @@ struct HeartRateStatsView: View {
         return Int(restingHR + r * pct)
     }
     
-    private func zoneRow(name: String, low: Int, high: Int) -> some View {
-        HStack {
+    private static let zoneBarColors: [Color] = [
+        Color.blue,      // Z1 恢复
+        Color.cyan,      // Z2 有氧
+        Color.green,     // Z3 节奏
+        Color.yellow,    // Z4 阈值
+        Color.orange,    // Z5 VO2max
+        Color.red        // Z6 无氧
+    ]
+    
+    private func zoneRow(name: String, low: Int, high: Int, duration: TimeInterval?, totalDuration: TimeInterval, zoneIndex: Int) -> some View {
+        HStack(alignment: .center, spacing: 6) {
             Text(name)
-                .font(.caption)
-                .foregroundColor(.black)
-            Spacer()
-            Text("\(low)–\(high) bpm")
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(width: 48, alignment: .leading)
+            
+            // 中间：时间 + 时间条
+            HStack(spacing: 4) {
+                if let sec = duration {
+                    Text(formatDuration(sec))
+                        .font(.caption)
+                        .foregroundColor(.black)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 36, alignment: .trailing)
+                    timeBar(duration: sec, total: totalDuration, zoneIndex: zoneIndex)
+                        .frame(minWidth: 40, maxWidth: .infinity)
+                } else {
+                    Text("—")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 36, alignment: .trailing)
+                    timeBar(duration: 0, total: 1, zoneIndex: zoneIndex)
+                        .frame(minWidth: 40, maxWidth: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            
+            Text("\(low)–\(high)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(width: 52, alignment: .trailing)
         }
+        .lineLimit(1)
+    }
+    
+    private func timeBar(duration: TimeInterval, total: TimeInterval, zoneIndex: Int) -> some View {
+        let ratio = total > 0 ? CGFloat(duration / total) : 0
+        let color = zoneIndex < Self.zoneBarColors.count ? Self.zoneBarColors[zoneIndex] : Color.gray
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.black.opacity(0.08))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 8)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color)
+                    .frame(width: max(2, geo.size.width * ratio), height: 8)
+            }
+        }
+        .frame(height: 8)
+    }
+    
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
+        if m >= 60 {
+            let h = m / 60
+            let min = m % 60
+            return String(format: "%d:%02d:%02d", h, min, s)
+        }
+        return String(format: "%d:%02d", m, s)
     }
 }
 
 // 六区模型百分比（与 WorkoutDetailView.zoneRanges 一致，供 HeartRateStatsView 使用）
 private let zoneRangesForStats: [(name: String, low: Double, high: Double)] = [
     ("Z1 恢复", 0.50, 0.60),
-    ("Z2 有氧", 0.60, 0.70),
-    ("Z3 节奏", 0.70, 0.80),
-    ("Z4 阈值", 0.80, 0.90),
-    ("Z5 VO2max", 0.90, 0.95),
-    ("Z6 无氧", 0.95, 1.00)
+    ("Z2 耐力", 0.61, 0.70),
+    ("Z3 有氧", 0.71, 0.80),
+    ("Z4 阈值", 0.81, 0.90),
+    ("Z5 无氧", 0.91, 0.95),
+    ("Z6 极限", 0.96, 1.00)
 ]
 
 // MARK: - 路线地图（带折线）
