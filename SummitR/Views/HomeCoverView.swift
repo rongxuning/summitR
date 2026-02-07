@@ -9,6 +9,8 @@ import SwiftUI
 
 struct HomeCoverView: View {
     @State private var animationOffset: CGFloat = 0
+    @State private var showWorkoutTypeSelection = false
+    @StateObject private var workoutManager = WorkoutManager()
     
     var body: some View {
         ZStack {
@@ -40,13 +42,35 @@ struct HomeCoverView: View {
                 }
                 
                 Spacer()
+                
+                Button(action: { showWorkoutTypeSelection = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "figure.run")
+                        Text("开始锻炼")
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(red: 0.35, green: 0.88, blue: 1.00))
+                    .cornerRadius(12)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
             }
             .padding()
         }
         .ignoresSafeArea()
         .safeAreaInset(edge: .bottom) {
-            // 为底部导航栏留出空间
             Color.clear.frame(height: 64)
+        }
+        .sheet(isPresented: $showWorkoutTypeSelection) {
+            WorkoutTypeSelectionView(workoutManager: workoutManager)
+                .onDisappear {
+                    if !workoutManager.isWorkoutActive {
+                        showWorkoutTypeSelection = false
+                    }
+                }
         }
     }
 }
